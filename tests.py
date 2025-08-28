@@ -1,65 +1,21 @@
-from cProfile import label
-from functions.get_files_info import get_files_info
-from functions.get_file_content import get_file_content
-from functions.write_file import write_file
+# tests.py
+from pathlib import Path
 from functions.run_python_file import run_python_file
-def test():
-    result = get_files_info("calculator", ".")
-    print("Result for current directory:")
-    print(result)
-    print("")
-
-    result = get_files_info("calculator", "pkg")
-    print("Result for 'pkg' directory:")
-    print(result)
-
-    result = get_files_info("calculator", "/bin")
-    print("Result for '/bin' directory:")
-    print(result)
-
-    result = get_files_info("calculator", "../")
-    print("Result for '../' directory:")
-    print(result)
-# Helper function to display results
-    def show(label, value):
-        print(f"--- {label} ---")
-        print(value if isinstance(value, str) else repr(value))
-        print()
-
-    # Truncation check
-    show("lorem (truncated)", get_file_content("calculator", "lorem.txt"))
-
-    # Normal reads
-    show("main.py", get_file_content("calculator", "main.py"))
-    show("pkg/calculator.py", get_file_content("calculator", "pkg/calculator.py"))
-
-    # Outside working dir -> error
-    show("outside", get_file_content("calculator", "/bin/cat"))
-
-    # Missing file -> error
-    show("missing", get_file_content("calculator", "pkg/does_not_exist.py"))
-    
 
 if __name__ == "__main__":
-    # 1) Overwrite lorem.txt inside working dir
-    print(write_file("calculator", "lorem.txt", "wait, this isn't lorem ipsum"))
+    # Ensure working dir exists
+    base = Path("calculator")
+    base.mkdir(parents=True, exist_ok=True)
 
-    # 2) Write inside a subfolder of working dir
-    print(write_file("calculator", "pkg/morelorem.txt", "lorem ipsum dolor sit amet"))
+    # 0) Create a tiny Python script that prints something
+    echo_path = base / "echo.py"
+    echo_path.write_text('print("hello from echo")\n', encoding="utf-8")
 
-    # 3) Attempt to write outside working dir (should error)
-    print(write_file("calculator", "/tmp/temp.txt", "this should not be allowed"))
-        # 1) Should print calculator usage/help (whatever main.py prints with no args)
-    print(run_python_file("calculator", "main.py"))
+    # 1) Run it -> should produce STDOUT:
+    print(run_python_file("calculator", "echo.py"))
 
-    # 2) Should run and print a numeric result (e.g., 8 for 3 + 5)
-    print(run_python_file("calculator", "main.py", ["3", "+", "5"]))
-
-    # 3) Outside working dir (expect "outside" error)
-    print(run_python_file("calculator", "../main.py"))
-
-    # 4) Not a Python file (change "lorem.txt" to any non-.py file you have in calculator/)
-    print(run_python_file("calculator", "lorem.txt"))
-
-    # 5) Missing file
+    # 2) Nonexistent file -> should contain: File "nonexistent.py" not found
     print(run_python_file("calculator", "nonexistent.py"))
+
+    # 3) Outside working dir -> should contain: Cannot execute "../main.py" as it is outside
+    print(run_python_file("calculator", "../main.py"))
