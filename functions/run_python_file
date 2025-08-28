@@ -1,0 +1,25 @@
+import os
+from pathlib import Path
+
+def run_python_file(working_directory, file_path,args=[]):
+    try:
+        base = Path(working_directory).resolve()
+        p = Path(file_path)
+
+        # Build absolute, normalized target path
+        target = p.resolve() if p.is_absolute() else (base / p).resolve()
+
+        # Block escapes outside working_directory
+        try:
+            target.relative_to(base)
+        except ValueError:
+            return f'Error: Cannot execute "{file_path}" as it is outside the permitted working directory.'
+        #must exits 
+        if not os.path.isdir(file_path):
+           return f'Error: File "{file_path}" not found.'
+        #must be a .py file
+        if target.suffix.lower() != ".py":
+            return f'Error: "{file_path}" is not a Python file.'
+    except Exception as e:
+        return f"Error: {e}"
+
