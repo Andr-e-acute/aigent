@@ -3,7 +3,12 @@ import sys
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
-from functions.get_files_info import schema_get_files_info
+from functions.get_files_info import (
+    schema_get_files_info,
+    schema_get_file_content,
+    schema_run_python_file,
+    schema_write_file,
+)
 
 system_prompt = """
 You are a helpful AI coding agent.
@@ -12,7 +17,9 @@ When a user asks a question or makes a request, make a function call plan.
 You can perform the following function:
 
 - List files and directories (get_files_info)
-
+- Read file contents
+- Execute Python files with optional arguments
+- Write or overwrite files
 All paths must be relative to the working directory. Do not specify the working directory yourself.
 """
 
@@ -31,7 +38,10 @@ def main():
     messages = [types.Content(role="user", parts=[types.Part(text=user_prompt)])]
 
     available_functions = [
-        types.Tool(function_declarations=[schema_get_files_info])
+        types.Tool(function_declarations=[schema_get_files_info]),
+        types.Tool(function_declarations=[schema_get_file_content]),
+        types.Tool(function_declarations=[schema_run_python_file]),
+        types.Tool(function_declarations=[schema_write_file]),
     ]
 
     config = types.GenerateContentConfig(
