@@ -1,15 +1,12 @@
-import os
 import sys
+import os
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
-from functions.get_files_info import (
-    schema_get_files_info,
-    schema_get_file_content,
-    schema_run_python_file,
-    schema_write_file,
-)
+import time
+from google.genai import errors as genai_errors
 
+from functions.call_function import call_function, available_functions
 system_prompt = """
 You are a helpful AI coding agent.
 
@@ -24,52 +21,110 @@ All paths must be relative to the working directory. Do not specify the working 
 """
 
 def main():
-    if len(sys.argv) < 2:
-        print("Error: Please provide a prompt as a command line argument.")
+    load_dotenv()
+
+    verbose = "--verbose" in sys.argv
+    args = []
+    for arg in sys.argv[1:]:
+        if not arg.startswith("--"):
+            args.append(arg)
+
+    if not args:
+        print("AI Code Assistant")
+        print('\nUsage: python main.py "your prompt here" [--verbose]')
+        print('Example: python main.py "How do I fix the calculator?"')
         sys.exit(1)
 
-    user_prompt = sys.argv[1]
-    verbose = "--verbose" in sys.argv
-
-    load_dotenv()
     api_key = os.environ.get("GEMINI_API_KEY")
     client = genai.Client(api_key=api_key)
 
-    messages = [types.Content(role="user", parts=[types.Part(text=user_prompt)])]
+    user_prompt = " ".join(args)
 
-    available_functions = [
-        types.Tool(function_declarations=[schema_get_files_info]),
-        types.Tool(function_declarations=[schema_get_file_content]),
-        types.Tool(function_declarations=[schema_run_python_file]),
-        types.Tool(function_declarations=[schema_write_file]),
+    run_agent(
+        client=client,
+        user_prompt=user_prompt,
+        system_prompt=system_prompt,
+        available_functions=available_functions,  # see note below
+        verbose=verbose,
+    )
+
+
+def gen_with_retry(client, *, model, contents, config, max_retries=5, base_delay=0.5):
+    attempt = 0
+    while True:
+        try:
+            return client.models.generate_content(model=model, contents=contents, config=config)
+        except genai_errors.ServerError as e:
+            code = getattr(e, "status_code", None)
+            if code in (429, 500, 502, 503, 504) and attempt < max_retries - 1:
+                time.sleep(base_delay * (2 ** attempt))
+                attempt += 1
+                continue
+            raise
+
+def run_agent(client, user_prompt, system_prompt,available_functions, verbose=False):
+    messages = [
+        types.Content(role="user", parts=[types.Part(text=user_prompt)]),
     ]
-
     config = types.GenerateContentConfig(
         tools=available_functions,
         system_instruction=system_prompt,
     )
+    for _ in range(10):
+        resp = gen_with_retry(
+            client,
+            model="gemini-2.0-flash-001",
+            contents=messages,
+            config=config
+        )
+        model_msg = resp.candidates[0].content
+        messages.append(model_msg)
+        fn_call = next(
+            (p.function_call for p in model_msg.parts if getattr(p, "function_call", None)),
+            None
+        )
+        if not fn_call:
+            final_text = (resp.text or "").strip()
+            print(final_text if final_text else "No output produced.")
+            break
+        tool_msg = call_function(fn_call, verbose=verbose)
+     
+        if verbose:
+            print(tool_msg.parts[0].function_response.response["result"])
 
-    resp = client.models.generate_content(
+     
+        messages.append(tool_msg)
+ 
+def generate_content(client, messages, verbose):
+    response = client.models.generate_content(
         model="gemini-2.0-flash-001",
         contents=messages,
-        config=config,
+        config=types.GenerateContentConfig(
+            tools=[available_functions], system_instruction=system_prompt
+        ),
     )
-
-    # Find a function_call in parts, if present
-    parts = resp.candidates[0].content.parts
-    fn_call_part = next((p.function_call for p in parts if getattr(p, "function_call", None)), None)
-
-    if fn_call_part:
-        # Print ONLY the function-call line (what the grader expects)
-        print(f"Calling function: {fn_call_part.name} with args: {fn_call_part.args}")
-    else:
-        # Otherwise print the model text
-        print(resp.text)
-
-    # Optional debug output only when explicitly requested
     if verbose:
-        print("Prompt tokens:", resp.usage_metadata.prompt_token_count)
-        print("Response tokens:", resp.usage_metadata.candidates_token_count)
+        print("Prompt tokens:", response.usage_metadata.prompt_token_count)
+        print("Response tokens:", response.usage_metadata.candidates_token_count)
+
+    if not response.function_calls:
+        return response.text
+
+    function_responses = []
+    for function_call_part in response.function_calls:
+        function_call_result = call_function(function_call_part, verbose)
+        if (
+            not function_call_result.parts
+            or not function_call_result.parts[0].function_response
+        ):
+            raise Exception("empty function call result")
+        if verbose:
+            print(f"-> {function_call_result.parts[0].function_response.response}")
+        function_responses.append(function_call_result.parts[0])
+
+    if not function_responses:
+        raise Exception("no function responses generated, exiting.")
+
 
 if __name__ == "__main__":
     main()
